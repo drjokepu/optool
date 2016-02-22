@@ -57,6 +57,8 @@
         c = "LC_LOAD_UPWARD_DYLIB";\
     else if (LOADCOMMAND == LC_LOAD_DYLIB) \
         c = "LC_LOAD_DYLIB";\
+    else if (LOADCOMMAND == LC_VERSION_MIN_MACOSX) \
+        c = "LC_VERSION_MIN_MACOSX";\
     c;\
 })
 
@@ -70,6 +72,8 @@
         cmd = LC_LOAD_UPWARD_DYLIB; \
     else if ([str isEqualToString: @"load"]) \
         cmd = LC_LOAD_DYLIB; \
+    else if ([str isEqualToString: @"version_min_macosx"]) \
+        cmd = LC_VERSION_MIN_MACOSX; \
     cmd; \
 })
 

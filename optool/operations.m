@@ -482,7 +482,8 @@ BOOL insertLoadEntryIntoBinary(NSString *dylibPath, NSMutableData *binary, struc
     if (type != LC_REEXPORT_DYLIB &&
         type != LC_LOAD_WEAK_DYLIB &&
         type != LC_LOAD_UPWARD_DYLIB &&
-        type != LC_LOAD_DYLIB) {
+        type != LC_LOAD_DYLIB &&
+        type != LC_VERSION_MIN_MACOSX) {
         LOG("Invalid load command type");
         return NO;
     }
@@ -502,8 +503,17 @@ BOOL insertLoadEntryIntoBinary(NSString *dylibPath, NSMutableData *binary, struc
     }
     
     // create a new load command
-    unsigned int length = (unsigned int)sizeof(struct dylib_command) + (unsigned int)dylibPath.length;
-    unsigned int padding = (8 - (length % 8));
+    unsigned int length, padding;
+    if (type == LC_REEXPORT_DYLIB ||
+        type == LC_LOAD_WEAK_DYLIB ||
+        type == LC_LOAD_UPWARD_DYLIB ||
+        type == LC_LOAD_DYLIB) {
+        length = (unsigned int)sizeof(struct dylib_command) + (unsigned int)dylibPath.length;
+        padding = (8 - (length % 8));
+    } else { // type == LC_VERSION_MIN_MACOSX
+        length = (unsigned int)sizeof(struct version_min_command);
+        padding = 0;
+    }
     
     // check if data we are replacing is null
     NSData *occupant = [binary subdataWithRange:NSMakeRange(macho.header.sizeofcmds + macho.offset + macho.size,
@@ -520,21 +530,39 @@ BOOL insertLoadEntryIntoBinary(NSString *dylibPath, NSMutableData *binary, struc
     
     LOG("Inserting a %s command for architecture: %s", LC(type), CPU(macho.header.cputype));
     
-    struct dylib_command command;
-    struct dylib dylib;
-    dylib.name.offset = sizeof(struct dylib_command);
-    dylib.timestamp = 2; // load commands I've seen use 2 for some reason
-    dylib.current_version = 0;
-    dylib.compatibility_version = 0;
-    command.cmd = type;
-    command.dylib = dylib;
-    command.cmdsize = length + padding;
-    
-    unsigned int zeroByte = 0;
     NSMutableData *commandData = [NSMutableData data];
-    [commandData appendBytes:&command length:sizeof(struct dylib_command)];
-    [commandData appendData:[dylibPath dataUsingEncoding:NSASCIIStringEncoding]];
-    [commandData appendBytes:&zeroByte length:padding];
+    unsigned int cmdSize = 0;
+    
+    if (type == LC_REEXPORT_DYLIB ||
+        type == LC_LOAD_WEAK_DYLIB ||
+        type == LC_LOAD_UPWARD_DYLIB ||
+        type == LC_LOAD_DYLIB) {
+        struct dylib_command command;
+        struct dylib dylib;
+        dylib.name.offset = sizeof(struct dylib_command);
+        dylib.timestamp = 2; // load commands I've seen use 2 for some reason
+        dylib.current_version = 0;
+        dylib.compatibility_version = 0;
+        command.cmd = type;
+        command.dylib = dylib;
+        command.cmdsize = length + padding;
+        
+        unsigned int zeroByte = 0;
+        
+        [commandData appendBytes:&command length:sizeof(struct dylib_command)];
+        [commandData appendData:[dylibPath dataUsingEncoding:NSASCIIStringEncoding]];
+        [commandData appendBytes:&zeroByte length:padding];
+        cmdSize = command.cmdsize;
+    } else if (type == LC_VERSION_MIN_MACOSX) {
+        struct version_min_command command;
+        command.cmd = type;
+        command.cmdsize = length;
+        command.version = (10 << 16) + (8 << 8);
+        command.sdk = (10 << 16) + (8 << 8);
+        
+        [commandData appendBytes:&command length:sizeof(struct version_min_command)];
+        cmdSize = command.cmdsize;
+    }
     
     // remove enough null bytes to account of our inserted data
     [binary replaceBytesInRange:NSMakeRange(macho.offset + macho.header.sizeofcmds + macho.size, commandData.length)
@@ -545,7 +573,7 @@ BOOL insertLoadEntryIntoBinary(NSString *dylibPath, NSMutableData *binary, struc
     
     // fix the existing header
     macho.header.ncmds += 1;
-    macho.header.sizeofcmds += command.cmdsize;
+    macho.header.sizeofcmds += cmdSize;
     
     // this is safe to do in 32bit because the 4 bytes after the header are still being put back
     [binary replaceBytesInRange:NSMakeRange(macho.offset, sizeof(macho.header)) withBytes:&macho.header];
